@@ -16,6 +16,10 @@ function auth (
     XSTS_TOKEN_URL="https://xsts.auth.xboxlive.com/xsts/authorize"
     MC_AUTH_URL="https://api.minecraftservices.com/authentication/login_with_xbox"
 
+    if ! [[ -e auth.json ]]; then
+        printf '{}\n' > auth.json
+    fi
+
     function login (
         printf 'getting device code\n' >&2
         res="$(curl -s -X POST "$DEVICE_CODE_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "client_id=$CLIENT_ID&scope=XboxLive.signin%20offline_access")"
