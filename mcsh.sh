@@ -47,7 +47,7 @@ function auth (
     refresh_token="$(<<<"$res" jq -r '.refresh_token')"
     msa_token="$(<<<"$res" jq -r '.access_token')"
 
-    auth="$(jq --arg token "$refresh_token" '. + {"refresh_token": $token}' auth.json)"
+    auth="$(jq --arg token "$refresh_token" '. + {"refresh_token": $token, "type": "msa"}' auth.json)"
     <<<"$auth" cat > auth.json
 
     printf 'authenticating with xbox live\n' >&2
