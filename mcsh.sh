@@ -2,14 +2,14 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-DATA_DIR="."
+DATA_DIR="./mcsh"
 mkdir -p "$DATA_DIR"
 
-VERSIONS_DIR="versions"
-LIBRARIES_DIR="libraries"
-NATIVES_DIR="natives"
-ASSETS_DIR="assets"
-GAME_DIR="run"
+VERSIONS_DIR="$DATA_DIR/versions"
+LIBRARIES_DIR="$DATA_DIR/libraries"
+NATIVES_DIR="$DATA_DIR/natives"
+ASSETS_DIR="$DATA_DIR/assets"
+GAME_DIR="$DATA_DIR/run"
 
 function auth (
     CLIENT_ID="9e97542c-b7d5-4a02-a656-4559dad4590a"
@@ -173,11 +173,11 @@ function launch (
 
     function replace_placeholders {
         cat - | sed \
-            -e "s/\${versions_directory}/$VERSIONS_DIR/g" \
-            -e "s/\${libraries_directory}/$LIBRARIES_DIR/g" \
-            -e "s/\${natives_directory}/$NATIVES_DIR/g" \
-            -e "s/\${assets_root}/$ASSETS_DIR/g" \
-            -e "s/\${game_directory}/$GAME_DIR/g" \
+            -e "s:\${versions_directory}:$VERSIONS_DIR:g" \
+            -e "s:\${libraries_directory}:$LIBRARIES_DIR:g" \
+            -e "s:\${natives_directory}:$NATIVES_DIR:g" \
+            -e "s:\${assets_root}:$ASSETS_DIR:g" \
+            -e "s:\${game_directory}:$GAME_DIR:g" \
             \
             -e "s/\${launcher_name}/mcsh/g" \
             -e "s/\${launcher_version}/v0.1.0/g" \
