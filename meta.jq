@@ -57,6 +57,7 @@ replace_placeholders | {
         "path": .downloads.artifact.path,
         "url": .downloads.artifact.url
     }],
+    "version": .id,
     "asset_index": .assetIndex.url,
     "java_version": .javaVersion.majorVersion,
     "client_url": .downloads.client.url,
