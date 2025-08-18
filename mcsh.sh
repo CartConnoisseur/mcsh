@@ -2,13 +2,16 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+DATA_DIR="."
+mkdir -p "$DATA_DIR"
+
 VERSIONS_DIR="versions"
 LIBRARIES_DIR="libraries"
 NATIVES_DIR="natives"
 ASSETS_DIR="assets"
 GAME_DIR="run"
 
-function auth (   
+function auth (
     CLIENT_ID="9e97542c-b7d5-4a02-a656-4559dad4590a"
     DEVICE_CODE_URL="https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
     TOKEN_URL="https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
@@ -16,8 +19,10 @@ function auth (
     XSTS_TOKEN_URL="https://xsts.auth.xboxlive.com/xsts/authorize"
     MC_AUTH_URL="https://api.minecraftservices.com/authentication/login_with_xbox"
 
-    if ! [[ -e auth.json ]]; then
-        printf '{}\n' > auth.json
+    profile="${1:-"<unknown>"}"
+
+    if ! [[ -e "$DATA_DIR/profiles.json" ]]; then
+        printf '{}\n' > "$DATA_DIR/profiles.json"
     fi
 
     function login (
@@ -39,20 +44,20 @@ function auth (
         printf '%s\n' "$res"
     )
 
-    if [[ -z "$(jq -r '.refresh_token // ""' auth.json)" ]]; then
+    if [[ -z "$(jq -r --arg profile "$profile" '.[$profile].refresh_token // ""' "$DATA_DIR/profiles.json")" ]]; then
         printf 'logging in\n' >&2
         res="$(login)"
     else
         printf 'refreshing msa auth\n' >&2
-        refresh_token="$(jq -r '.refresh_token' auth.json)"
+        refresh_token="$(jq -r --arg profile "$profile" '.[$profile].refresh_token // ""' "$DATA_DIR/profiles.json")"
         res="$(curl -s -X POST "$TOKEN_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "grant_type=refresh_token&client_id=$CLIENT_ID&refresh_token=$refresh_token")"
     fi
 
     refresh_token="$(<<<"$res" jq -r '.refresh_token')"
     msa_token="$(<<<"$res" jq -r '.access_token')"
 
-    auth="$(jq --arg token "$refresh_token" '. + {"refresh_token": $token, "type": "msa"}' auth.json)"
-    <<<"$auth" cat > auth.json
+    profiles="$(jq --arg profile "$profile" --arg token "$refresh_token" '. + {$profile: {"refresh_token": $token, "type": "msa"}}' "$DATA_DIR/profiles.json")"
+    <<<"$profiles" cat > "$DATA_DIR/profiles.json"
 
     printf 'authenticating with xbox live\n' >&2
     req="$(jq -n --arg token "$msa_token" '{"Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": "d=\($token)"}, "RelyingParty": "http://auth.xboxlive.com", "TokenType": "JWT"}')"
@@ -62,8 +67,8 @@ function auth (
 
     # not 100% sure this is *actually* the xuid, but the game doesnt seem to
     # care, even if passed a nonsense value
-    auth="$(jq --arg xuid "$xuid" '. + {"xuid": $xuid}' auth.json)"
-    <<<"$auth" cat > auth.json
+    profiles="$(jq --arg profile "$profile" --arg xuid "$xuid" '. + {$profile: .[$profile] + {"xuid": $xuid}}' "$DATA_DIR/profiles.json")"
+    <<<"$profiles" cat > "$DATA_DIR/profiles.json"
 
     printf 'getting xsts token\n' >&2
     req="$(jq -n --arg token "$xbl_token" '{"Properties": {"SandboxId": "RETAIL", "UserTokens": [ $token ]}, "RelyingParty": "rp://api.minecraftservices.com/", "TokenType": "JWT"}')"
@@ -75,16 +80,18 @@ function auth (
     res="$(curl -s -X POST "$MC_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
     mc_token="$(<<<"$res" jq -r '.access_token')"
 
-    auth="$(jq --arg token "$mc_token" '. + {"access_token": $token}' auth.json)"
-    <<<"$auth" cat > auth.json
+    profiles="$(jq --arg profile "$profile" --arg token "$mc_token" '. + {$profile: .[$profile] + {"access_token": $token}}' "$DATA_DIR/profiles.json")"
+    <<<"$profiles" cat > "$DATA_DIR/profiles.json"
 
-    printf '%s\n' "$mc_token"
+    # printf '%s\n' "$mc_token"
+    printf '%s\n' "$profile"
 )
 
 function update_profile (
     MC_PROFILE_URL="https://api.minecraftservices.com/minecraft/profile"
 
-    token="$1"
+    profile="$1"
+    token="$(jq -r --arg profile "$profile" '.[$profile].access_token' "$DATA_DIR/profiles.json")"
 
     printf 'getting minecraft profile\n' >&2
     res="$(curl -s -X GET "$MC_PROFILE_URL" -H "Authorization: Bearer $token")"
@@ -94,8 +101,10 @@ function update_profile (
     fi
     
     #TODO: hyphenate uuid, for :sparkles: style :sparkles:
-    auth="$(<<<"$res" jq --slurpfile auth auth.json '$auth[0] + {"player_name": .name, "uuid": .id}')"
-    <<<"$auth" cat > auth.json
+    profiles="$(<<<"$res" jq --arg profile "$profile" --slurpfile profiles "$DATA_DIR/profiles.json" '$profiles[0] + {"\(.name)": $profiles[0].[$profile] + {"player_name": .name, "uuid": .id}} | del(.["<unknown>"])')"
+    <<<"$profiles" cat > "$DATA_DIR/profiles.json"
+
+    jq --arg profile "$profile" '.[$profile]' "$DATA_DIR/profiles.json"
 )
 
 function update_metadata (
@@ -108,7 +117,7 @@ function update_metadata (
     printf 'updating %s meta %s\n' "$version" >&2
     mkdir -p "$VERSIONS_DIR/$version"
     curl --silent -o "$VERSIONS_DIR/$version/meta.json" "$(jq -r --arg version "$version" '.versions[$version]' $VERSIONS_DIR/manifest.json)"
-    meta="$(jq -c --slurpfile info info.json --slurpfile auth auth.json -f meta.jq "$VERSIONS_DIR/$version/meta.json")"
+    meta="$(jq -c --slurpfile info info.json -f meta.jq "$VERSIONS_DIR/$version/meta.json")"
 
     printf 'updating %s asset index...\n' "$version" >&2
     mkdir -p "$ASSETS_DIR/indexes"
@@ -119,7 +128,7 @@ function update_metadata (
 )
 
 function launch (
-    update_profile "$(auth)"
+    profile="$(update_profile "$(auth "${2:-}")")"
     printf '\n' >&2
 
     meta="$(update_metadata "${1:-}")"
@@ -171,11 +180,17 @@ function launch (
             -e "s/\${game_directory}/$GAME_DIR/g" \
             \
             -e "s/\${launcher_name}/mcsh/g" \
-            -e "s/\${launcher_version}/v0.1.0/g"
+            -e "s/\${launcher_version}/v0.1.0/g" \
+            \
+            -e "s/\${auth_player_name}/$(<<<"$profile" jq -r '.player_name')/g" \
+            -e "s/\${auth_uuid}/$(<<<"$profile" jq -r '.uuid')/g" \
+            -e "s/\${auth_xuid}/$(<<<"$profile" jq -r '.xuid')/g" \
+            -e "s/\${user_type}/$(<<<"$profile" jq -r '.type')/g" \
+            -e "s/\${auth_access_token}/$(<<<"$profile" jq -r '.access_token')/g"
     }
 
     printf '\nstarting game :3\n\n' >&2
     <<<"$meta" jq -r '.args.jvm + [.main_class] + .args.game | join(" ")' | replace_placeholders | xargs java
 )
 
-launch "${1:-}"
+launch "$@"

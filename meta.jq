@@ -14,12 +14,6 @@ def apply_optional: if has("rules") then
 end;
 
 def replace_placeholders: {
-    "auth_player_name": $auth[0].player_name,
-    "auth_uuid": $auth[0].uuid,
-    "auth_xuid": $auth[0].xuid,
-    "auth_access_token": $auth[0].access_token,
-    "user_type": $auth[0].type,
-
     "version_name": .id,
     "version_type": .type,
 
