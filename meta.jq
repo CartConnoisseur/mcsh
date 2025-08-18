@@ -25,20 +25,13 @@ def replace_placeholders: {
 
     "assets_index_name": .assets,
 
-    "assets_root": "${assets_directory}",
-    #"game_directory": "run",
-    #"natives_directory": "natives",
-
     "classpath": (. as $root | [
         .libraries[] | apply_optional | "${libraries_directory}/" + .downloads.artifact.path
     ] + ["${versions_directory}/\($root.id)/client.jar"] | join(":")),
     "clientid": "idfk",
 
     # log4j config path
-    "path": "${versions_directory}/\(.id)/log4j.xml",
-
-    "launcher_name": "mcsh",
-    "launcher_version": "v0.1.0"
+    "path": "${versions_directory}/\(.id)/log4j.xml"
 } as $strings | walk(if type == "string" then
     gsub("\\${(?<key>.*)}"; "\($strings[.key] // "${\(.key)}")")
 end);

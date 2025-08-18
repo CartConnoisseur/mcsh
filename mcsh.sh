@@ -74,8 +74,11 @@ function launch (
             -e "s/\${versions_directory}/$VERSIONS_DIR/g" \
             -e "s/\${libraries_directory}/$LIBRARIES_DIR/g" \
             -e "s/\${natives_directory}/$NATIVES_DIR/g" \
-            -e "s/\${assets_directory}/$ASSETS_DIR/g" \
-            -e "s/\${game_directory}/$GAME_DIR/g"
+            -e "s/\${assets_root}/$ASSETS_DIR/g" \
+            -e "s/\${game_directory}/$GAME_DIR/g" \
+            \
+            -e "s/\${launcher_name}/mcsh/g" \
+            -e "s/\${launcher_version}/v0.1.0/g"
     }
 
     printf 'starting game :3\n' >&2
