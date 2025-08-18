@@ -24,17 +24,18 @@ def replace_placeholders: {
     "version_type": .type,
 
     "assets_index_name": .assets,
-    "assets_root": "assets",
-    "game_directory": "run",
-    "natives_directory": "natives",
+
+    "assets_root": "${assets_directory}",
+    #"game_directory": "run",
+    #"natives_directory": "natives",
 
     "classpath": (. as $root | [
-        .libraries[] | apply_optional | "libraries/" + .downloads.artifact.path
-    ] + ["versions/\($root.id)/client.jar"] | join(":")),
+        .libraries[] | apply_optional | "${libraries_directory}/" + .downloads.artifact.path
+    ] + ["${versions_directory}/\($root.id)/client.jar"] | join(":")),
     "clientid": "idfk",
 
     # log4j config path
-    "path": "versions/\(.id)/log4j.xml",
+    "path": "${versions_directory}/\(.id)/log4j.xml",
 
     "launcher_name": "mcsh",
     "launcher_version": "v0.1.0"
