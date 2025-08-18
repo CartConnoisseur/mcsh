@@ -10,7 +10,7 @@ GAME_DIR="run"
 
 VERSION="1.21.8"
 
-function update_metadata {
+function update_metadata (
     printf 'updating version manifest\n' >&2
     mkdir -p "$VERSIONS_DIR"
     curl --silent "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json" | jq '{"latest": .latest, "versions": [.versions[] | {"key": .id, "value": .url}] | from_entries}' > "$VERSIONS_DIR/manifest.json"
@@ -24,10 +24,12 @@ function update_metadata {
     mkdir -p "$ASSETS_DIR/indexes"
     assets_url="$(<<<"$meta" jq -r '.asset_index')"
     curl --silent -o "$ASSETS_DIR/indexes/$(basename "$assets_url")" "$assets_url"
-}
+
+    printf '%s\n' "$meta"
+)
 
 function launch (
-    update_metadata
+    meta="$(update_metadata)"
 
     export LIBRARIES_DIR
     function download_library {
@@ -59,7 +61,7 @@ function launch (
     <<<"$meta" jq -r '.libraries[] | "\(.name) \(.path) \(.url)"' | xargs -I {} "$SHELL" -c "download_library {}"
 
     printf 'downloading assets...\n' >&2
-    jq -r '.objects | to_entries[] | "\(.key) \(.value.hash[:2])/\(.value.hash)"' "$ASSETS_DIR/indexes/$(basename "$assets_url")" | xargs -P 10 -I {} "$SHELL" -c "download_asset {}"
+    jq -r '.objects | to_entries[] | "\(.key) \(.value.hash[:2])/\(.value.hash)"' "$ASSETS_DIR/indexes/$(basename "$(<<<"$meta" jq -r '.asset_index')")" | xargs -P 10 -I {} "$SHELL" -c "download_asset {}"
 
     # if ! [[ -e "$VERSIONS_DIR/$VERSION/log4j.xml" ]]; then
     #     printf 'downloading %s log4j config...\n' "$VERSION" >&2
