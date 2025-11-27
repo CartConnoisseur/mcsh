@@ -25,63 +25,86 @@ function auth (
         printf '{}\n' > "$DATA_DIR/profiles.json"
     fi
 
-    function login (
-        printf 'getting device code\n' >&2
-        res="$(curl -s -X POST "$DEVICE_CODE_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "client_id=$CLIENT_ID&scope=XboxLive.signin%20offline_access")"
-        device_code="$(<<<"$res" jq -r '.device_code')"
-        message="$(<<<"$res" jq -r '.message')"
+    msa_token=""
+    refresh_token=""
 
-        printf '%s\n' "$message" >&2
+    xuid=""
+    xbl_token=""
+    xsts_token=""
 
-        printf 'waiting for token...\n' >&2
-        pending=true
-        while [[ "$pending" == true ]]; do
-            res="$(curl -s -X POST "$TOKEN_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "grant_type=urn:ietf:params:oauth:grant-type:device_code&client_id=$CLIENT_ID&device_code=$device_code")"
-            pending="$(<<<"$res" jq -r '.error == "authorization_pending"')"
-            sleep 1
-        done
+    mc_token=""
 
-        printf '%s\n' "$res"
+    function msa (
+        function login (
+            printf 'getting device code\n' >&2
+            res="$(curl -s -X POST "$DEVICE_CODE_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "client_id=$CLIENT_ID&scope=XboxLive.signin%20offline_access")"
+            device_code="$(<<<"$res" jq -r '.device_code')"
+            message="$(<<<"$res" jq -r '.message')"
+
+            printf '%s\n' "$message" >&2
+
+            printf 'waiting for token...\n' >&2
+            pending=true
+            while [[ "$pending" == true ]]; do
+                res="$(curl -s -X POST "$TOKEN_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "grant_type=urn:ietf:params:oauth:grant-type:device_code&client_id=$CLIENT_ID&device_code=$device_code")"
+                pending="$(<<<"$res" jq -r '.error == "authorization_pending"')"
+                sleep 1
+            done
+
+            printf '%s\n' "$res"
+        )
+
+        if [[ -z "$(jq -r --arg profile "$profile" '.[$profile].refresh_token // ""' "$DATA_DIR/profiles.json")" ]]; then
+            printf 'logging in\n' >&2
+            res="$(login)"
+        else
+            printf 'refreshing msa auth\n' >&2
+            refresh_token="$(jq -r --arg profile "$profile" '.[$profile].refresh_token // ""' "$DATA_DIR/profiles.json")"
+            res="$(curl -s -X POST "$TOKEN_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "grant_type=refresh_token&client_id=$CLIENT_ID&refresh_token=$refresh_token")"
+        fi
+
+        refresh_token="$(<<<"$res" jq -r '.refresh_token')"
+        msa_token="$(<<<"$res" jq -r '.access_token')"
+
+        profiles="$(jq --arg profile "$profile" --arg token "$refresh_token" '. + {$profile: {"refresh_token": $token, "type": "msa"}}' "$DATA_DIR/profiles.json")"
+        <<<"$profiles" cat > "$DATA_DIR/profiles.json"
     )
 
-    if [[ -z "$(jq -r --arg profile "$profile" '.[$profile].refresh_token // ""' "$DATA_DIR/profiles.json")" ]]; then
-        printf 'logging in\n' >&2
-        res="$(login)"
-    else
-        printf 'refreshing msa auth\n' >&2
-        refresh_token="$(jq -r --arg profile "$profile" '.[$profile].refresh_token // ""' "$DATA_DIR/profiles.json")"
-        res="$(curl -s -X POST "$TOKEN_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "grant_type=refresh_token&client_id=$CLIENT_ID&refresh_token=$refresh_token")"
-    fi
+    function xbl (
+        printf 'authenticating with xbox live\n' >&2
+        req="$(jq -n --arg token "$msa_token" '{"Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": "d=\($token)"}, "RelyingParty": "http://auth.xboxlive.com", "TokenType": "JWT"}')"
+        res="$(curl -s -X POST "$XBL_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
+        xuid="$(<<<"$res" jq -r '.DisplayClaims.xui[0].uhs')"
+        xbl_token="$(<<<"$res" jq -r '.Token')"
 
-    refresh_token="$(<<<"$res" jq -r '.refresh_token')"
-    msa_token="$(<<<"$res" jq -r '.access_token')"
+        # not 100% sure this is *actually* the xuid, but the game doesnt seem to
+        # care, even if passed a nonsense value
+        profiles="$(jq --arg profile "$profile" --arg xuid "$xuid" '. + {$profile: .[$profile] + {"xuid": $xuid}}' "$DATA_DIR/profiles.json")"
+        <<<"$profiles" cat > "$DATA_DIR/profiles.json"
+    )
 
-    profiles="$(jq --arg profile "$profile" --arg token "$refresh_token" '. + {$profile: {"refresh_token": $token, "type": "msa"}}' "$DATA_DIR/profiles.json")"
-    <<<"$profiles" cat > "$DATA_DIR/profiles.json"
+    function xsts (
+        printf 'getting xsts token\n' >&2
+        req="$(jq -n --arg token "$xbl_token" '{"Properties": {"SandboxId": "RETAIL", "UserTokens": [ $token ]}, "RelyingParty": "rp://api.minecraftservices.com/", "TokenType": "JWT"}')"
+        res="$(curl -s -X POST "$XSTS_TOKEN_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
+        xsts_token="$(<<<"$res" jq -r '.Token')"
+    )
 
-    printf 'authenticating with xbox live\n' >&2
-    req="$(jq -n --arg token "$msa_token" '{"Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": "d=\($token)"}, "RelyingParty": "http://auth.xboxlive.com", "TokenType": "JWT"}')"
-    res="$(curl -s -X POST "$XBL_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
-    xuid="$(<<<"$res" jq -r '.DisplayClaims.xui[0].uhs')"
-    xbl_token="$(<<<"$res" jq -r '.Token')"
+    function mc (
+        printf 'authenticating with minecraft\n' >&2
+        req="$(jq -n --arg xuid "$xuid" --arg token "$xsts_token" '{"identityToken": "XBL3.0 x=\($xuid);\($token)"}')"
+        # req="$(jq -n --arg token "$xsts_token" '{"identityToken": "XBL3.0 x=\($token)"}')"
+        res="$(curl -s -X POST "$MC_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
+        mc_token="$(<<<"$res" jq -r '.access_token')"
 
-    # not 100% sure this is *actually* the xuid, but the game doesnt seem to
-    # care, even if passed a nonsense value
-    profiles="$(jq --arg profile "$profile" --arg xuid "$xuid" '. + {$profile: .[$profile] + {"xuid": $xuid}}' "$DATA_DIR/profiles.json")"
-    <<<"$profiles" cat > "$DATA_DIR/profiles.json"
+        profiles="$(jq --arg profile "$profile" --arg token "$mc_token" '. + {$profile: .[$profile] + {"access_token": $token}}' "$DATA_DIR/profiles.json")"
+        <<<"$profiles" cat > "$DATA_DIR/profiles.json"
+    )
 
-    printf 'getting xsts token\n' >&2
-    req="$(jq -n --arg token "$xbl_token" '{"Properties": {"SandboxId": "RETAIL", "UserTokens": [ $token ]}, "RelyingParty": "rp://api.minecraftservices.com/", "TokenType": "JWT"}')"
-    res="$(curl -s -X POST "$XSTS_TOKEN_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
-    xsts_token="$(<<<"$res" jq -r '.Token')"
-
-    printf 'authenticating with minecraft\n' >&2
-    req="$(jq -n --arg xuid "$xuid" --arg token "$xsts_token" '{"identityToken": "XBL3.0 x=\($xuid);\($token)"}')"
-    res="$(curl -s -X POST "$MC_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
-    mc_token="$(<<<"$res" jq -r '.access_token')"
-
-    profiles="$(jq --arg profile "$profile" --arg token "$mc_token" '. + {$profile: .[$profile] + {"access_token": $token}}' "$DATA_DIR/profiles.json")"
-    <<<"$profiles" cat > "$DATA_DIR/profiles.json"
+    msa
+    xbl
+    xsts
+    mc
 
     # printf '%s\n' "$mc_token"
     printf '%s\n' "$profile"
