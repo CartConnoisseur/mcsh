@@ -239,6 +239,7 @@ function update_version (
 				"asset_index": .assetIndex.url,
 				"java_version": .javaVersion.majorVersion,
 				"client_url": .downloads.client.url,
+				"client_hash": .downloads.client.sha1,
 				"main_class": .mainClass,
 				"logging_config": .logging.client.file.url
 			}
@@ -291,9 +292,13 @@ function update_version (
 	}
 	export -f download_asset
 
-	#TODO: check hash
 	version="$(<<<"$meta" jq -r '.version')"
-	if ! [[ -e "$VERSIONS_DIR/$version/client.jar" ]]; then
+	hash=""
+	if [[ -e "$VERSIONS_DIR/$version/client.jar" ]]; then
+		hash="$(sha1sum "$VERSIONS_DIR/$version/client.jar")"
+		hash="${hash%%[[:space:]]*}"
+	fi
+	if ! [[ "$hash" == "$(<<<"$meta" jq -r '.client_hash')" ]]; then
 		printf 'downloading %s client jar...\n' "$version" >&2
 		<<<"$meta" jq -r '.client_url' | xargs curl --silent -o "$VERSIONS_DIR/$version/client.jar"
 	fi
