@@ -191,7 +191,12 @@ function update_metadata (
     mkdir -p "$VERSIONS_DIR"
     curl --silent "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json" | jq '{"latest": .latest, "versions": [.versions[] | {"key": .id, "value": .url}] | from_entries}' > "$VERSIONS_DIR/manifest.json"
 
-    version="${1:-"$(jq -r '.latest.release' "$VERSIONS_DIR/manifest.json")"}"
+    version="${1:-}"
+    if [[ "$version" == "" || "$version" == "latest" || "$version" == "release" ]]; then
+        version="$(jq -r '.latest.release' "$VERSIONS_DIR/manifest.json")"
+    elif [[ "$version" == "snapshot" ]]; then
+        version="$(jq -r '.latest.snapshot' "$VERSIONS_DIR/manifest.json")"
+    fi
 
     printf 'updating %s meta %s\n' "$version" >&2
     mkdir -p "$VERSIONS_DIR/$version"
