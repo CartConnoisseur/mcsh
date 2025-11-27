@@ -157,8 +157,30 @@ function update_profile (
         exit 1
     fi
     
-    #TODO: hyphenate uuid, for :sparkles: style :sparkles:
-    profiles="$(<<<"$res" jq --arg profile "$profile" --slurpfile profiles "$DATA_DIR/profiles.json" '$profiles[0] + {"\(.name)": $profiles[0].[$profile] + {"username": .name, "uuid": .id}} | del(.["<unknown>"])')"
+    uuid="$(<<<"$res" jq -r '.id')"
+    uuid="${uuid:0:8}-${uuid:8:4}-${uuid:12:4}-${uuid:16:4}-${uuid:20:12}"
+
+    profiles="$(
+        <<<"$res" jq \
+        --arg profile "$profile" \
+        --arg uuid "$uuid" \
+        --slurpfile profiles "$DATA_DIR/profiles.json" \
+        '$profiles[0].[$profile] as $prev
+        | $profiles[0] + {
+            "\(.name)": {
+                "username": .name,
+                "uuid": $uuid,
+                "xuid": $prev.xuid,
+                "type": $prev.type,
+                "skins": .skins,
+                "capes": .capes,
+                "refresh_token": $prev.refresh_token,
+                "xbl_token": $prev.xbl_token,
+                "mc_token": $prev.mc_token
+            }
+        }
+        | del(.["<unknown>"])'
+    )"
     <<<"$profiles" cat > "$DATA_DIR/profiles.json"
 
     jq --arg profile "$profile" '.[$profile]' "$DATA_DIR/profiles.json"
