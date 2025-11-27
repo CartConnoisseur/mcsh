@@ -122,7 +122,6 @@ function auth (
 			'. + {
 				$profile: .[$profile] + {
 					"xuid": $xuid,
-					"type": "msa",
 					"refresh_token": {
 						"token": $refresh_token,
 						"expiration": ($refresh_token_exp | tonumber)
@@ -171,7 +170,6 @@ function update_profile (
 				"username": .name,
 				"uuid": $uuid,
 				"xuid": $prev.xuid,
-				"type": $prev.type,
 				"skins": .skins,
 				"capes": .capes,
 				"access_token": $prev.access_token,
@@ -337,7 +335,7 @@ function launch (
 			-e "s/\${auth_player_name}/$(<<<"$profile" jq -r '.username')/g" \
 			-e "s/\${auth_uuid}/$(<<<"$profile" jq -r '.uuid')/g" \
 			-e "s/\${auth_xuid}/$(<<<"$profile" jq -r '.xuid')/g" \
-			-e "s/\${user_type}/$(<<<"$profile" jq -r '.type')/g" \
+			-e "s/\${user_type}/msa/g" \
 			-e "s/\${auth_access_token}/$(<<<"$profile" jq -r '.access_token.token')/g"
 	}
 
