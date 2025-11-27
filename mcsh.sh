@@ -36,8 +36,8 @@ function auth (
 	xbl_token_exp="$(jq -r --arg profile "$profile" '.[$profile].xbl_token.expiration // 0' "$DATA_DIR/profiles.json")"
 	xsts_token=""
 
-	mc_token="$(jq -r --arg profile "$profile" '.[$profile].mc_token.token // ""' "$DATA_DIR/profiles.json")"
-	mc_token_exp="$(jq -r --arg profile "$profile" '.[$profile].mc_token.expiration // 0' "$DATA_DIR/profiles.json")"
+	access_token="$(jq -r --arg profile "$profile" '.[$profile].access_token.token // ""' "$DATA_DIR/profiles.json")"
+	access_token_exp="$(jq -r --arg profile "$profile" '.[$profile].access_token.expiration // 0' "$DATA_DIR/profiles.json")"
 
 	function msa {
 		function login (
@@ -94,11 +94,11 @@ function auth (
 		req="$(jq -n --arg xuid "$xuid" --arg token "$xsts_token" '{"identityToken": "XBL3.0 x=\($xuid);\($token)"}')"
 		# req="$(jq -n --arg token "$xsts_token" '{"identityToken": "XBL3.0 x=\($token)"}')"
 		res="$(curl -s -X POST "$MC_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
-		mc_token="$(<<<"$res" jq -r '.access_token')"
-		mc_token_exp="$((now + "$(<<<"$res" jq -r '.expires_in')"))"
+		access_token="$(<<<"$res" jq -r '.access_token')"
+		access_token_exp="$((now + "$(<<<"$res" jq -r '.expires_in')"))"
 	}
 
-	if [[ "$now" -ge "$mc_token_exp" ]]; then
+	if [[ "$now" -ge "$access_token_exp" ]]; then
 		if [[ "$now" -ge "$xbl_token_exp" ]]; then
 			msa
 			xbl
@@ -117,8 +117,8 @@ function auth (
 			--arg refresh_token_exp "$refresh_token_exp" \
 			--arg xbl_token "$xbl_token" \
 			--arg xbl_token_exp "$xbl_token_exp" \
-			--arg mc_token "$mc_token" \
-			--arg mc_token_exp "$mc_token_exp" \
+			--arg access_token "$access_token" \
+			--arg access_token_exp "$access_token_exp" \
 			'. + {
 				$profile: .[$profile] + {
 					"xuid": $xuid,
@@ -131,9 +131,9 @@ function auth (
 						"token": $xbl_token,
 						"expiration": ($xbl_token_exp | tonumber)
 					},
-					"mc_token": {
-						"token": $mc_token,
-						"expiration": ($mc_token_exp | tonumber)
+					"access_token": {
+						"token": $access_token,
+						"expiration": ($access_token_exp | tonumber)
 					}
 				}
 			}' \
@@ -148,7 +148,7 @@ function update_profile (
 	MC_PROFILE_URL="https://api.minecraftservices.com/minecraft/profile"
 
 	profile="$1"
-	token="$(jq -r --arg profile "$profile" '.[$profile].mc_token.token' "$DATA_DIR/profiles.json")"
+	token="$(jq -r --arg profile "$profile" '.[$profile].access_token.token' "$DATA_DIR/profiles.json")"
 
 	printf 'getting minecraft profile\n' >&2
 	res="$(curl -s -X GET "$MC_PROFILE_URL" -H "Authorization: Bearer $token")"
@@ -174,9 +174,9 @@ function update_profile (
 				"type": $prev.type,
 				"skins": .skins,
 				"capes": .capes,
+				"access_token": $prev.access_token,
 				"refresh_token": $prev.refresh_token,
-				"xbl_token": $prev.xbl_token,
-				"mc_token": $prev.mc_token
+				"xbl_token": $prev.xbl_token
 			}
 		}
 		| del(.["<unknown>"])'
@@ -338,7 +338,7 @@ function launch (
 			-e "s/\${auth_uuid}/$(<<<"$profile" jq -r '.uuid')/g" \
 			-e "s/\${auth_xuid}/$(<<<"$profile" jq -r '.xuid')/g" \
 			-e "s/\${user_type}/$(<<<"$profile" jq -r '.type')/g" \
-			-e "s/\${auth_access_token}/$(<<<"$profile" jq -r '.mc_token.token')/g"
+			-e "s/\${auth_access_token}/$(<<<"$profile" jq -r '.access_token.token')/g"
 	}
 
 	printf '\nstarting game :3\n\n' >&2
