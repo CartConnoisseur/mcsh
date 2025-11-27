@@ -186,91 +186,88 @@ function update_profile (
 	jq --arg profile "$profile" '.[$profile]' "$DATA_DIR/profiles.json"
 )
 
-function update_metadata (
-	meta_filter="$(cat <<-'EOF'
-		def apply_optional: if has("rules") then
-			{
-				"rules": [.rules[] | {
-					"action": .action,
-					"match": del(.action)
+function update_version (
+	function update_metadata (
+		meta_filter="$(cat <<-'EOF'
+			def apply_optional: if has("rules") then
+				{
+					"rules": [.rules[] | {
+						"action": .action,
+						"match": del(.action)
+					}],
+					"value": del(.rules)
+				} as $optional
+				| if $optional.rules[].match | inside($info[0]) then
+					$optional.value
+				else
+					empty
+				end
+			end;
+
+			def replace_placeholders: {
+				"version_name": .id,
+				"version_type": .type,
+
+				"assets_index_name": .assets,
+
+				"classpath": (. as $root | [
+					.libraries[] | apply_optional | "${libraries_directory}/" + .downloads.artifact.path
+				] + ["${versions_directory}/\($root.id)/client.jar"] | join(":")),
+				"clientid": "idfk",
+
+				# log4j config path
+				"path": "${versions_directory}/\(.id)/log4j.xml"
+			} as $strings | walk(if type == "string" then
+				gsub("\\${(?<key>.*)}"; "\($strings[.key] // "${\(.key)}")")
+			end);
+
+			replace_placeholders | {
+				"args": .arguments | to_entries | [.[] | {
+					"key": .key,
+					"value": .value | [
+						.[] | if type == "object" then
+							apply_optional | .value
+						end
+					] | flatten
+				}] | from_entries, # as $args | $args + {"jvm": [.logging.client.argument] + $args.jvm}),
+				"libraries": [.libraries[] | apply_optional | {
+					"name": .name,
+					"path": .downloads.artifact.path,
+					"url": .downloads.artifact.url
 				}],
-				"value": del(.rules)
-			} as $optional
-			| if $optional.rules[].match | inside($info[0]) then
-				$optional.value
-			else
-				empty
-			end
-		end;
+				"version": .id,
+				"asset_index": .assetIndex.url,
+				"java_version": .javaVersion.majorVersion,
+				"client_url": .downloads.client.url,
+				"main_class": .mainClass,
+				"logging_config": .logging.client.file.url
+			}
+			EOF
+		)"
 
-		def replace_placeholders: {
-			"version_name": .id,
-			"version_type": .type,
+		printf 'updating version manifest\n' >&2
+		mkdir -p "$VERSIONS_DIR"
+		curl --silent "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json" | jq '{"latest": .latest, "versions": [.versions[] | {"key": .id, "value": .url}] | from_entries}' > "$VERSIONS_DIR/manifest.json"
 
-			"assets_index_name": .assets,
+		version="${1:-}"
+		if [[ "$version" == "" || "$version" == "latest" || "$version" == "release" ]]; then
+			version="$(jq -r '.latest.release' "$VERSIONS_DIR/manifest.json")"
+		elif [[ "$version" == "snapshot" ]]; then
+			version="$(jq -r '.latest.snapshot' "$VERSIONS_DIR/manifest.json")"
+		fi
 
-			"classpath": (. as $root | [
-				.libraries[] | apply_optional | "${libraries_directory}/" + .downloads.artifact.path
-			] + ["${versions_directory}/\($root.id)/client.jar"] | join(":")),
-			"clientid": "idfk",
+		printf 'updating %s meta %s\n' "$version" >&2
+		mkdir -p "$VERSIONS_DIR/$version"
+		curl --silent -o "$VERSIONS_DIR/$version/meta.json" "$(jq -r --arg version "$version" '.versions[$version]' $VERSIONS_DIR/manifest.json)"
+		meta="$(jq -c --slurpfile info info.json "$meta_filter" "$VERSIONS_DIR/$version/meta.json")"
 
-			# log4j config path
-			"path": "${versions_directory}/\(.id)/log4j.xml"
-		} as $strings | walk(if type == "string" then
-			gsub("\\${(?<key>.*)}"; "\($strings[.key] // "${\(.key)}")")
-		end);
+		printf 'updating %s asset index...\n' "$version" >&2
+		mkdir -p "$ASSETS_DIR/indexes"
+		assets_url="$(<<<"$meta" jq -r '.asset_index')"
+		curl --silent -o "$ASSETS_DIR/indexes/$(basename "$assets_url")" "$assets_url"
 
-		replace_placeholders | {
-			"args": .arguments | to_entries | [.[] | {
-				"key": .key,
-				"value": .value | [
-					.[] | if type == "object" then
-						apply_optional | .value
-					end
-				] | flatten
-			}] | from_entries, # as $args | $args + {"jvm": [.logging.client.argument] + $args.jvm}),
-			"libraries": [.libraries[] | apply_optional | {
-				"name": .name,
-				"path": .downloads.artifact.path,
-				"url": .downloads.artifact.url
-			}],
-			"version": .id,
-			"asset_index": .assetIndex.url,
-			"java_version": .javaVersion.majorVersion,
-			"client_url": .downloads.client.url,
-			"main_class": .mainClass,
-			"logging_config": .logging.client.file.url
-		}
-		EOF
-	)"
-
-	printf 'updating version manifest\n' >&2
-	mkdir -p "$VERSIONS_DIR"
-	curl --silent "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json" | jq '{"latest": .latest, "versions": [.versions[] | {"key": .id, "value": .url}] | from_entries}' > "$VERSIONS_DIR/manifest.json"
-
-	version="${1:-}"
-	if [[ "$version" == "" || "$version" == "latest" || "$version" == "release" ]]; then
-		version="$(jq -r '.latest.release' "$VERSIONS_DIR/manifest.json")"
-	elif [[ "$version" == "snapshot" ]]; then
-		version="$(jq -r '.latest.snapshot' "$VERSIONS_DIR/manifest.json")"
-	fi
-
-	printf 'updating %s meta %s\n' "$version" >&2
-	mkdir -p "$VERSIONS_DIR/$version"
-	curl --silent -o "$VERSIONS_DIR/$version/meta.json" "$(jq -r --arg version "$version" '.versions[$version]' $VERSIONS_DIR/manifest.json)"
-	meta="$(jq -c --slurpfile info info.json "$meta_filter" "$VERSIONS_DIR/$version/meta.json")"
-
-	printf 'updating %s asset index...\n' "$version" >&2
-	mkdir -p "$ASSETS_DIR/indexes"
-	assets_url="$(<<<"$meta" jq -r '.asset_index')"
-	curl --silent -o "$ASSETS_DIR/indexes/$(basename "$assets_url")" "$assets_url"
-
-	printf '%s\n' "$meta"
-)
-
-function launch (
-	profile="$(update_profile "$(auth "${2:-}")")"
-	printf '\n' >&2
+		printf '%s\n' "$meta"
+	)
 
 	meta="$(update_metadata "${1:-}")"
 
@@ -311,6 +308,15 @@ function launch (
 	#     printf 'downloading %s log4j config...\n' "$version" >&2
 	#     <<<"$meta" jq -r '.logging_config' | xargs curl --silent -o "$VERSIONS_DIR/$version/log4j.xml"
 	# fi
+
+	printf '%s\n' "$meta"
+)
+
+function launch (
+	profile="$(update_profile "$(auth "${2:-}")")"
+	printf '\n' >&2
+
+	meta="$(update_version "${1:-}")"
 
 	function replace_placeholders {
 		cat - | sed \
