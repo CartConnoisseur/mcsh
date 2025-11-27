@@ -75,7 +75,7 @@ function auth (
     res="$(curl -s -X POST "$XSTS_TOKEN_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
     xsts_token="$(<<<"$res" jq -r '.Token')"
 
-    printf 'authenticating with mincraft\n' >&2
+    printf 'authenticating with minecraft\n' >&2
     req="$(jq -n --arg xuid "$xuid" --arg token "$xsts_token" '{"identityToken": "XBL3.0 x=\($xuid);\($token)"}')"
     res="$(curl -s -X POST "$MC_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
     mc_token="$(<<<"$res" jq -r '.access_token')"
