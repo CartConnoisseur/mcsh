@@ -25,16 +25,21 @@ function auth (
         printf '{}\n' > "$DATA_DIR/profiles.json"
     fi
 
-    msa_token=""
-    refresh_token=""
+    now="$(date -u '+%s')"
 
-    xuid=""
-    xbl_token=""
+    msa_token=""
+    refresh_token="$(jq -r --arg profile "$profile" '.[$profile].refresh_token.token // ""' "$DATA_DIR/profiles.json")"
+    refresh_token_exp="$(jq -r --arg profile "$profile" '.[$profile].refresh_token.expiration // 0' "$DATA_DIR/profiles.json")"
+
+    xuid="$(jq -r --arg profile "$profile" '.[$profile].xuid // ""' "$DATA_DIR/profiles.json")"
+    xbl_token="$(jq -r --arg profile "$profile" '.[$profile].xbl_token.token // ""' "$DATA_DIR/profiles.json")"
+    xbl_token_exp="$(jq -r --arg profile "$profile" '.[$profile].xbl_token.expiration // 0' "$DATA_DIR/profiles.json")"
     xsts_token=""
 
-    mc_token=""
+    mc_token="$(jq -r --arg profile "$profile" '.[$profile].mc_token.token // ""' "$DATA_DIR/profiles.json")"
+    mc_token_exp="$(jq -r --arg profile "$profile" '.[$profile].mc_token.expiration // 0' "$DATA_DIR/profiles.json")"
 
-    function msa (
+    function msa {
         function login (
             printf 'getting device code\n' >&2
             res="$(curl -s -X POST "$DEVICE_CODE_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "client_id=$CLIENT_ID&scope=XboxLive.signin%20offline_access")"
@@ -54,59 +59,88 @@ function auth (
             printf '%s\n' "$res"
         )
 
-        if [[ -z "$(jq -r --arg profile "$profile" '.[$profile].refresh_token // ""' "$DATA_DIR/profiles.json")" ]]; then
+        if [[ "$now" -ge "$refresh_token_exp" ]]; then
             printf 'logging in\n' >&2
             res="$(login)"
         else
             printf 'refreshing msa auth\n' >&2
-            refresh_token="$(jq -r --arg profile "$profile" '.[$profile].refresh_token // ""' "$DATA_DIR/profiles.json")"
+            refresh_token="$(jq -r --arg profile "$profile" '.[$profile].refresh_token.token // ""' "$DATA_DIR/profiles.json")"
             res="$(curl -s -X POST "$TOKEN_URL" -H 'Content-Type: application/x-www-form-urlencoded' -d "grant_type=refresh_token&client_id=$CLIENT_ID&refresh_token=$refresh_token")"
         fi
 
-        refresh_token="$(<<<"$res" jq -r '.refresh_token')"
         msa_token="$(<<<"$res" jq -r '.access_token')"
+        refresh_token="$(<<<"$res" jq -r '.refresh_token')"
+        refresh_token_exp="$((now + 90*24*60*60))" # msa refresh tokens expire in 90 days
+    }
 
-        profiles="$(jq --arg profile "$profile" --arg token "$refresh_token" '. + {$profile: {"refresh_token": $token, "type": "msa"}}' "$DATA_DIR/profiles.json")"
-        <<<"$profiles" cat > "$DATA_DIR/profiles.json"
-    )
-
-    function xbl (
+    function xbl {
         printf 'authenticating with xbox live\n' >&2
         req="$(jq -n --arg token "$msa_token" '{"Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": "d=\($token)"}, "RelyingParty": "http://auth.xboxlive.com", "TokenType": "JWT"}')"
         res="$(curl -s -X POST "$XBL_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
         xuid="$(<<<"$res" jq -r '.DisplayClaims.xui[0].uhs')"
         xbl_token="$(<<<"$res" jq -r '.Token')"
+        xbl_token_exp="$(date -u '+%s' -d "$(<<<"$res" jq -r '.NotAfter')")"
+    }
 
-        # not 100% sure this is *actually* the xuid, but the game doesnt seem to
-        # care, even if passed a nonsense value
-        profiles="$(jq --arg profile "$profile" --arg xuid "$xuid" '. + {$profile: .[$profile] + {"xuid": $xuid}}' "$DATA_DIR/profiles.json")"
-        <<<"$profiles" cat > "$DATA_DIR/profiles.json"
-    )
-
-    function xsts (
+    function xsts {
         printf 'getting xsts token\n' >&2
         req="$(jq -n --arg token "$xbl_token" '{"Properties": {"SandboxId": "RETAIL", "UserTokens": [ $token ]}, "RelyingParty": "rp://api.minecraftservices.com/", "TokenType": "JWT"}')"
         res="$(curl -s -X POST "$XSTS_TOKEN_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
         xsts_token="$(<<<"$res" jq -r '.Token')"
-    )
+    }
 
-    function mc (
+    function mc {
         printf 'authenticating with minecraft\n' >&2
         req="$(jq -n --arg xuid "$xuid" --arg token "$xsts_token" '{"identityToken": "XBL3.0 x=\($xuid);\($token)"}')"
         # req="$(jq -n --arg token "$xsts_token" '{"identityToken": "XBL3.0 x=\($token)"}')"
         res="$(curl -s -X POST "$MC_AUTH_URL" -H 'Content-Type: application/json' -H 'Accept: application/json' -d "$req")"
         mc_token="$(<<<"$res" jq -r '.access_token')"
+        mc_token_exp="$((now + "$(<<<"$res" jq -r '.expires_in')"))"
+    }
 
-        profiles="$(jq --arg profile "$profile" --arg token "$mc_token" '. + {$profile: .[$profile] + {"access_token": $token}}' "$DATA_DIR/profiles.json")"
-        <<<"$profiles" cat > "$DATA_DIR/profiles.json"
-    )
+    if [[ "$now" -ge "$mc_token_exp" ]]; then
+        if [[ "$now" -ge "$xbl_token_exp" ]]; then
+            msa
+            xbl
+        fi
 
-    msa
-    xbl
-    xsts
-    mc
+        xsts
+        mc
+    else
+        printf 'mc token valid\n' >&2
+    fi
 
-    # printf '%s\n' "$mc_token"
+    profiles="$(
+        jq  --arg profile "$profile" \
+            --arg xuid "$xuid" \
+            --arg refresh_token "$refresh_token" \
+            --arg refresh_token_exp "$refresh_token_exp" \
+            --arg xbl_token "$xbl_token" \
+            --arg xbl_token_exp "$xbl_token_exp" \
+            --arg mc_token "$mc_token" \
+            --arg mc_token_exp "$mc_token_exp" \
+            '. + {
+                $profile: .[$profile] + {
+                    "xuid": $xuid,
+                    "type": "msa",
+                    "refresh_token": {
+                        "token": $refresh_token,
+                        "expiration": ($refresh_token_exp | tonumber)
+                    },
+                    "xbl_token": {
+                        "token": $xbl_token,
+                        "expiration": ($xbl_token_exp | tonumber)
+                    },
+                    "mc_token": {
+                        "token": $mc_token,
+                        "expiration": ($mc_token_exp | tonumber)
+                    }
+                }
+            }' \
+            "$DATA_DIR/profiles.json"
+    )"
+    <<<"$profiles" cat > "$DATA_DIR/profiles.json"
+
     printf '%s\n' "$profile"
 )
 
@@ -114,7 +148,7 @@ function update_profile (
     MC_PROFILE_URL="https://api.minecraftservices.com/minecraft/profile"
 
     profile="$1"
-    token="$(jq -r --arg profile "$profile" '.[$profile].access_token' "$DATA_DIR/profiles.json")"
+    token="$(jq -r --arg profile "$profile" '.[$profile].mc_token.token' "$DATA_DIR/profiles.json")"
 
     printf 'getting minecraft profile\n' >&2
     res="$(curl -s -X GET "$MC_PROFILE_URL" -H "Authorization: Bearer $token")"
@@ -124,7 +158,7 @@ function update_profile (
     fi
     
     #TODO: hyphenate uuid, for :sparkles: style :sparkles:
-    profiles="$(<<<"$res" jq --arg profile "$profile" --slurpfile profiles "$DATA_DIR/profiles.json" '$profiles[0] + {"\(.name)": $profiles[0].[$profile] + {"player_name": .name, "uuid": .id}} | del(.["<unknown>"])')"
+    profiles="$(<<<"$res" jq --arg profile "$profile" --slurpfile profiles "$DATA_DIR/profiles.json" '$profiles[0] + {"\(.name)": $profiles[0].[$profile] + {"username": .name, "uuid": .id}} | del(.["<unknown>"])')"
     <<<"$profiles" cat > "$DATA_DIR/profiles.json"
 
     jq --arg profile "$profile" '.[$profile]' "$DATA_DIR/profiles.json"
@@ -205,11 +239,11 @@ function launch (
             -e "s/\${launcher_name}/mcsh/g" \
             -e "s/\${launcher_version}/v0.1.0/g" \
             \
-            -e "s/\${auth_player_name}/$(<<<"$profile" jq -r '.player_name')/g" \
+            -e "s/\${auth_player_name}/$(<<<"$profile" jq -r '.username')/g" \
             -e "s/\${auth_uuid}/$(<<<"$profile" jq -r '.uuid')/g" \
             -e "s/\${auth_xuid}/$(<<<"$profile" jq -r '.xuid')/g" \
             -e "s/\${user_type}/$(<<<"$profile" jq -r '.type')/g" \
-            -e "s/\${auth_access_token}/$(<<<"$profile" jq -r '.access_token')/g"
+            -e "s/\${auth_access_token}/$(<<<"$profile" jq -r '.mc_token.token')/g"
     }
 
     printf '\nstarting game :3\n\n' >&2
